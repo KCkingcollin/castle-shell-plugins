@@ -11,6 +11,8 @@ Note: Unless they fixed it the extra repo is missing a depend for hyprpm you'll 
 
 # Nix
 
+NOTE: I do not use Nix, and the Castel-shell project will not use nix, but feel free to try as ive left the files that are needed and I think I altered the corect files, however I have no idea
+
 To use these plugins, it's recommended that you are already using the
 [Hyprland flake](https://github.com/hyprwm/Hyprland).
 First, add this flake to your inputs:
