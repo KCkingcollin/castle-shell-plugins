@@ -54,4 +54,4 @@ this:
 
 Feel free to open issues and MRs with fixes.
 
-be aware I'm not the originator of some of these apps, go upstream for issues with hyprbars, or expo, but if you have issues installing I'd be happy to help.
+Be aware I'm not the originator of some of these apps, go upstream for issues with hyprbars, or expo, but if you have issues installing I'd be happy to help.
