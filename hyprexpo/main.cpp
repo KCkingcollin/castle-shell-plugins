@@ -14,9 +14,9 @@
 inline CFunctionHook* g_pRenderWorkspaceHook = nullptr;
 inline CFunctionHook* g_pAddDamageHookA      = nullptr;
 inline CFunctionHook* g_pAddDamageHookB      = nullptr;
-typedef void          (*origRenderWorkspace)(void*, CMonitor*, PHLWORKSPACE, timespec*, const CBox&);
-typedef void          (*origAddDamageA)(void*, const CBox*);
-typedef void          (*origAddDamageB)(void*, const pixman_region32_t*);
+typedef void (*origRenderWorkspace)(void*, PHLMONITOR, PHLWORKSPACE, timespec*, const CBox&);
+typedef void (*origAddDamageA)(void*, const CBox*);
+typedef void (*origAddDamageB)(void*, const pixman_region32_t*);
 
 // Do NOT change this function.
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -26,7 +26,7 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 static bool renderingOverview = false;
 
 //
-static void hkRenderWorkspace(void* thisptr, CMonitor* pMonitor, PHLWORKSPACE pWorkspace, timespec* now, const CBox& geometry) {
+static void hkRenderWorkspace(void* thisptr, PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, timespec* now, const CBox& geometry) {
     if (!g_pOverview || renderingOverview || g_pOverview->blockOverviewRendering || g_pOverview->pMonitor != pMonitor)
         ((origRenderWorkspace)(g_pRenderWorkspaceHook->m_pOriginal))(thisptr, pMonitor, pWorkspace, now, geometry);
     else
@@ -36,7 +36,7 @@ static void hkRenderWorkspace(void* thisptr, CMonitor* pMonitor, PHLWORKSPACE pW
 static void hkAddDamageA(void* thisptr, const CBox* box) {
     const auto PMONITOR = (CMonitor*)thisptr;
 
-    if (!g_pOverview || g_pOverview->pMonitor != PMONITOR || g_pOverview->blockDamageReporting) {
+    if (!g_pOverview || g_pOverview->pMonitor != PMONITOR->self || g_pOverview->blockDamageReporting) {
         ((origAddDamageA)g_pAddDamageHookA->m_pOriginal)(thisptr, box);
         return;
     }
@@ -47,7 +47,7 @@ static void hkAddDamageA(void* thisptr, const CBox* box) {
 static void hkAddDamageB(void* thisptr, const pixman_region32_t* rg) {
     const auto PMONITOR = (CMonitor*)thisptr;
 
-    if (!g_pOverview || g_pOverview->pMonitor != PMONITOR || g_pOverview->blockDamageReporting) {
+    if (!g_pOverview || g_pOverview->pMonitor != PMONITOR->self || g_pOverview->blockDamageReporting) {
         ((origAddDamageB)g_pAddDamageHookB->m_pOriginal)(thisptr, rg);
         return;
     }
@@ -155,7 +155,7 @@ static void onExpoDispatcher(std::string arg) {
 }
 
 static void failNotif(const std::string& reason) {
-    HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Failure in initialization: " + reason, CColor{1.0, 0.2, 0.2, 1.0}, 5000);
+    HyprlandAPI::addNotification(PHANDLE, "[hyprexpo] Failure in initialization: " + reason, CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
 }
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {

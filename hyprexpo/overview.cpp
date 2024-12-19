@@ -18,11 +18,11 @@ COverview::~COverview() {
     g_pHyprRenderer->makeEGLCurrent();
     images.clear(); // otherwise we get a vram leak
     g_pInputManager->unsetCursorImage();
-    g_pHyprOpenGL->markBlurDirtyForMonitor(pMonitor);
+    g_pHyprOpenGL->markBlurDirtyForMonitor(pMonitor.lock());
 }
 
 COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn_), swipe(swipe_) {
-    const auto PMONITOR = g_pCompositor->m_pLastMonitor.get();
+    const auto PMONITOR = g_pCompositor->m_pLastMonitor.lock();
     pMonitor            = PMONITOR;
 
     static auto* const* PCOLUMNS = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprexpo:columns")->getDataStaticPtr();
@@ -35,13 +35,13 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn
     BG_COLOR    = **PCOL;
 
     // process the method
-    bool     methodCenter = true;
+    bool     methodCenter  = true;
     int      methodStartID = pMonitor->activeWorkspaceID();
     CVarList method{*PMETHOD, 0, 's', true};
     if (method.size() < 2)
         Debug::log(ERR, "[he] invalid workspace_method");
     else {
-        methodCenter = method[0] == "center";
+        methodCenter  = method[0] == "center";
         methodStartID = getWorkspaceIDNameFromString(method[1]).id;
         if (methodStartID == WORKSPACE_INVALID)
             methodStartID = pMonitor->activeWorkspaceID();
@@ -65,7 +65,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn
         }
 
         for (size_t i = 0; i < SIDE_LENGTH * SIDE_LENGTH; ++i) {
-            auto&       image = images[i];
+            auto& image = images[i];
             currentID =
                 getWorkspaceIDNameFromString("r" + ((int64_t)i - backtracked < 0 ? std::to_string((int64_t)i - backtracked) : "+" + std::to_string((int64_t)i - backtracked))).id;
             image.workspaceID = currentID;
@@ -76,12 +76,12 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn
 
         auto PWORKSPACESTART = g_pCompositor->getWorkspaceByID(currentID);
         if (!PWORKSPACESTART)
-            PWORKSPACESTART = CWorkspace::create(currentID, pMonitor->ID, std::to_string(currentID));
+            PWORKSPACESTART = CWorkspace::create(currentID, pMonitor.lock(), std::to_string(currentID));
 
         pMonitor->activeWorkspace = PWORKSPACESTART;
 
         for (size_t i = 1; i < SIDE_LENGTH * SIDE_LENGTH; ++i) {
-            auto&       image = images[i];
+            auto& image       = images[i];
             currentID         = getWorkspaceIDNameFromString("r+" + std::to_string(i)).id;
             image.workspaceID = currentID;
         }
@@ -115,7 +115,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn
         CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
         g_pHyprRenderer->beginRender(PMONITOR, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
 
-        g_pHyprOpenGL->clear(CColor{0, 0, 0, 1.0});
+        g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
 
         const auto PWORKSPACE = g_pCompositor->getWorkspaceByID(image.workspaceID);
 
@@ -205,7 +205,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn
     touchMoveHook = g_pHookSystem->hookDynamic("touchMove", onCursorMove);
 
     mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onCursorSelect);
-    touchUpHook     = g_pHookSystem->hookDynamic("touchUp", onCursorSelect);
+    touchDownHook   = g_pHookSystem->hookDynamic("touchDown", onCursorSelect);
 }
 
 void COverview::redrawID(int id, bool forcelowres) {
@@ -237,14 +237,13 @@ void COverview::redrawID(int id, bool forcelowres) {
 
     if (image.fb.m_vSize != monbox.size()) {
         image.fb.release();
-        image.fb.m_pStencilTex = nullptr;
         image.fb.alloc(monbox.w, monbox.h, pMonitor->output->state->state().drmFormat);
     }
 
     CRegion fakeDamage{0, 0, INT16_MAX, INT16_MAX};
-    g_pHyprRenderer->beginRender(pMonitor, fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
+    g_pHyprRenderer->beginRender(pMonitor.lock(), fakeDamage, RENDER_MODE_FULL_FAKE, nullptr, &image.fb);
 
-    g_pHyprOpenGL->clear(CColor{0, 0, 0, 1.0});
+    g_pHyprOpenGL->clear(CHyprColor{0, 0, 0, 1.0});
 
     const auto   PWORKSPACE = image.pWorkspace;
 
@@ -262,7 +261,7 @@ void COverview::redrawID(int id, bool forcelowres) {
         if (PWORKSPACE == startedOn)
             pMonitor->activeSpecialWorkspace = openSpecial;
 
-        g_pHyprRenderer->renderWorkspace(pMonitor, PWORKSPACE, &now, monbox);
+        g_pHyprRenderer->renderWorkspace(pMonitor.lock(), PWORKSPACE, &now, monbox);
 
         PWORKSPACE->m_bVisible = false;
         PWORKSPACE->startAnim(false, false, true);
@@ -270,7 +269,7 @@ void COverview::redrawID(int id, bool forcelowres) {
         if (PWORKSPACE == startedOn)
             pMonitor->activeSpecialWorkspace.reset();
     } else
-        g_pHyprRenderer->renderWorkspace(pMonitor, PWORKSPACE, &now, monbox);
+        g_pHyprRenderer->renderWorkspace(pMonitor.lock(), PWORKSPACE, &now, monbox);
 
     g_pHyprOpenGL->m_RenderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
@@ -291,7 +290,7 @@ void COverview::redrawAll(bool forcelowres) {
 
 void COverview::damage() {
     blockDamageReporting = true;
-    g_pHyprRenderer->damageMonitor(pMonitor);
+    g_pHyprRenderer->damageMonitor(pMonitor.lock());
     blockDamageReporting = false;
 }
 
@@ -312,7 +311,7 @@ void COverview::onDamageReported() {
     blockDamageReporting = true;
     g_pHyprRenderer->damageBox(&texbox);
     blockDamageReporting = false;
-    g_pCompositor->scheduleFrameForMonitor(pMonitor);
+    g_pCompositor->scheduleFrameForMonitor(pMonitor.lock());
 }
 
 void COverview::close() {
@@ -400,7 +399,7 @@ void COverview::render() {
             texbox.scale(pMonitor->scale).translate(pos.value());
             texbox.round();
             CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-            g_pHyprOpenGL->renderTextureInternalWithDamage(images[x + y * SIDE_LENGTH].fb.m_cTex, &texbox, 1.0, &damage);
+            g_pHyprOpenGL->renderTextureInternalWithDamage(images[x + y * SIDE_LENGTH].fb.getTexture(), &texbox, 1.0, &damage);
         }
     }
 }

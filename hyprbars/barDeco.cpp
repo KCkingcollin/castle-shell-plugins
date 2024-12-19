@@ -2,6 +2,8 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/Window.hpp>
+#include <hyprland/src/helpers/MiscFunctions.hpp>
+#include <hyprland/src/managers/SeatManager.hpp>
 #include <pango/pangocairo.h>
 
 #include "globals.hpp"
@@ -9,7 +11,7 @@
 CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
     m_pWindow = pWindow;
 
-    const auto PMONITOR       = g_pCompositor->getMonitorFromID(pWindow->m_iMonitorID);
+    const auto PMONITOR       = pWindow->m_pMonitor.lock();
     PMONITOR->scheduledRecalc = true;
 
     m_pMouseButtonCallback = HyprlandAPI::registerCallbackDynamic(
@@ -54,7 +56,12 @@ std::string CHyprBar::getDisplayName() {
 }
 
 void CHyprBar::onMouseDown(SCallbackInfo& info, IPointer::SButtonEvent e) {
-    if (m_pWindow.lock() != g_pCompositor->m_pLastWindow.lock())
+    if (!m_pWindow->m_pWorkspace->isVisible() || !g_pInputManager->m_dExclusiveLSes.empty() || (g_pSeatManager->seatGrab && !g_pSeatManager->seatGrab->accepts(m_pWindow->m_pWLSurface->resource())))
+        return;
+
+    const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(), RESERVED_EXTENTS | INPUT_EXTENTS | ALLOW_FLOATING);
+
+    if (WINDOWATCURSOR != m_pWindow && m_pWindow != g_pCompositor->m_pLastWindow)
         return;
 
     const auto         PWINDOW = m_pWindow.lock();
@@ -137,7 +144,7 @@ void CHyprBar::onMouseMove(Vector2D coords) {
     }
 }
 
-void CHyprBar::renderText(SP<CTexture> out, const std::string& text, const CColor& color, const Vector2D& bufferSize, const float scale, const int fontSize) {
+void CHyprBar::renderText(SP<CTexture> out, const std::string& text, const CHyprColor& color, const Vector2D& bufferSize, const float scale, const int fontSize) {
     const auto CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bufferSize.x, bufferSize.y);
     const auto CAIRO        = cairo_create(CAIROSURFACE);
 
@@ -214,16 +221,16 @@ void CHyprBar::renderBarTitle(const Vector2D& bufferSize, const float scale) {
         buttonSizes += b.size + **PBARBUTTONPADDING;
     }
 
-    const auto   scaledSize        = **PSIZE * scale;
-    const auto   scaledBorderSize  = BORDERSIZE * scale;
-    const auto   scaledButtonsSize = buttonSizes * scale;
-    const auto   scaledButtonsPad  = **PBARBUTTONPADDING * scale;
-    const auto   scaledBarPadding  = **PBARPADDING * scale;
+    const auto       scaledSize        = **PSIZE * scale;
+    const auto       scaledBorderSize  = BORDERSIZE * scale;
+    const auto       scaledButtonsSize = buttonSizes * scale;
+    const auto       scaledButtonsPad  = **PBARBUTTONPADDING * scale;
+    const auto       scaledBarPadding  = **PBARPADDING * scale;
 
-    const CColor COLOR = m_bForcedTitleColor.value_or(**PCOLOR);
+    const CHyprColor COLOR = m_bForcedTitleColor.value_or(**PCOLOR);
 
-    const auto   CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bufferSize.x, bufferSize.y);
-    const auto   CAIRO        = cairo_create(CAIROSURFACE);
+    const auto       CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bufferSize.x, bufferSize.y);
+    const auto       CAIRO        = cairo_create(CAIROSURFACE);
 
     // clear the pixmap
     cairo_save(CAIRO);
@@ -364,7 +371,7 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
 
             const bool     LIGHT = button.col.r + button.col.g + button.col.b < 1;
 
-            renderText(button.iconTex, button.icon, LIGHT ? CColor(0xFFFFFFFF) : CColor(0xFF000000), BUFSIZE, scale, button.size * 0.62);
+            renderText(button.iconTex, button.icon, LIGHT ? CHyprColor(0xFFFFFFFF) : CHyprColor(0xFF000000), BUFSIZE, scale, button.size * 0.62);
         }
 
         if (button.iconTex->m_iTexID == 0)
@@ -383,7 +390,7 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
     }
 }
 
-void CHyprBar::draw(CMonitor* pMonitor, float a) {
+void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     if (m_bHidden || !validMapped(m_pWindow))
         return;
 
@@ -412,7 +419,7 @@ void CHyprBar::draw(CMonitor* pMonitor, float a) {
 
     const auto scaledRounding = ROUNDING > 0 ? ROUNDING * pMonitor->scale - 2 /* idk why but otherwise it looks bad due to the gaps */ : 0;
 
-    CColor     color = m_bForcedBarColor.value_or(**PCOLOR);
+    CHyprColor color = m_bForcedBarColor.value_or(**PCOLOR);
     color.a *= a;
 
     m_seExtents = {{0, **PHEIGHT}, {}};
@@ -451,7 +458,7 @@ void CHyprBar::draw(CMonitor* pMonitor, float a) {
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 
         windowBox.translate(WORKSPACEOFFSET).scale(pMonitor->scale).round();
-        g_pHyprOpenGL->renderRect(&windowBox, CColor(0, 0, 0, 0), scaledRounding);
+        g_pHyprOpenGL->renderRect(&windowBox, CHyprColor(0, 0, 0, 0), scaledRounding);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
         glStencilFunc(GL_NOTEQUAL, 1, -1);
@@ -561,13 +568,13 @@ void CHyprBar::updateRules() {
         m_bTitleColorChanged = true;
 }
 
-void CHyprBar::applyRule(const SWindowRule& r) {
-    auto arg = r.szRule.substr(r.szRule.find_first_of(' ') + 1);
+void CHyprBar::applyRule(const SP<CWindowRule>& r) {
+    auto arg = r->szRule.substr(r->szRule.find_first_of(' ') + 1);
 
-    if (r.szRule == "plugin:hyprbars:nobar")
+    if (r->szRule == "plugin:hyprbars:nobar")
         m_bHidden = true;
-    else if (r.szRule.starts_with("plugin:hyprbars:bar_color"))
-        m_bForcedBarColor = CColor(configStringToInt(arg));
-    else if (r.szRule.starts_with("plugin:hyprbars:title_color"))
-        m_bForcedTitleColor = CColor(configStringToInt(arg));
+    else if (r->szRule.starts_with("plugin:hyprbars:bar_color"))
+        m_bForcedBarColor = CHyprColor(configStringToInt(arg).value_or(0));
+    else if (r->szRule.starts_with("plugin:hyprbars:title_color"))
+        m_bForcedTitleColor = CHyprColor(configStringToInt(arg).value_or(0));
 }
