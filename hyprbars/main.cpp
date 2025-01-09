@@ -6,6 +6,7 @@
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/Window.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/render/Renderer.hpp>
 
 #include "barDeco.hpp"
 #include "globals.hpp"
@@ -59,10 +60,10 @@ Hyprlang::CParseResult onNewButton(const char* K, const char* V) {
 
     Hyprlang::CParseResult result;
 
-    // hyprbars-button = color, size, icon, action
+    // hyprbars-button = bgcolor, size, icon, action, fgcolor
 
     if (vars[0].empty() || vars[1].empty()) {
-        result.setError("var 1 and 2 cannot be empty");
+        result.setError("bgcolor and size cannot be empty");
         return result;
     }
 
@@ -70,16 +71,30 @@ Hyprlang::CParseResult onNewButton(const char* K, const char* V) {
     try {
         size = std::stof(vars[1]);
     } catch (std::exception& e) {
-        result.setError("failed parsing var 2 as int");
+        result.setError("failed to parse size");
         return result;
     }
 
-    auto X = configStringToInt(vars[0]);
-    if (!X) {
-        result.setError("var2 is not a valid number");
+    bool userfg  = false;
+    auto fgcolor = configStringToInt("rgb(ffffff)");
+    auto bgcolor = configStringToInt(vars[1]);
+
+    if (!bgcolor) {
+        result.setError("invalid bgcolor");
         return result;
     }
-    g_pGlobalState->buttons.push_back(SHyprButton{vars[3], *X, size, vars[2]});
+
+    if (vars.size() == 5) {
+        userfg  = true;
+        fgcolor = configStringToInt(vars[4]);
+    }
+
+    if (!fgcolor) {
+        result.setError("invalid fgcolor");
+        return result;
+    }
+
+    g_pGlobalState->buttons.push_back(SHyprButton{vars[3], userfg, *fgcolor, *bgcolor, size, vars[2]});
 
     for (auto& b : g_pGlobalState->bars) {
         b->m_bButtonsDirty = true;
@@ -111,6 +126,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:col.text", Hyprlang::INT{*configStringToInt("rgba(ffffffff)")});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:bar_text_size", Hyprlang::INT{10});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:bar_title_enabled", Hyprlang::INT{1});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:bar_blur", Hyprlang::INT{0});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:bar_text_font", Hyprlang::STRING{"Sans"});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:bar_text_align", Hyprlang::STRING{"center"});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:bar_part_of_window", Hyprlang::INT{1});
@@ -140,4 +156,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     for (auto& m : g_pCompositor->m_vMonitors)
         m->scheduledRecalc = true;
+
+    g_pHyprRenderer->m_sRenderPass.removeAllOfType("CBarPassElement");
 }

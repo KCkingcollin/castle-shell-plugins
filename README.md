@@ -8,6 +8,15 @@ hyprpm enable hyprbars
 ```
 
 Note: Unless they fixed it the extra repo is missing a depend for hyprpm you'll need ``hyprwayland-scaner`` to get hyprland plugins to build.
+=======
+> [!IMPORTANT]
+> hyprland-plugins only officially supports installation via `hyprpm`.
+> hyprland-plugins follows hyprland-git and requires you to be on hyprland-git
+> or tagged >= v0.33.1.
+
+# Plugin list
+ - hyprbars -> adds title bars to windows
+ - hyprexpo -> adds an expo-like workspace overview
 
 # Nix
 

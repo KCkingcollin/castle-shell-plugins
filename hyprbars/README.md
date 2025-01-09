@@ -26,6 +26,8 @@ plugin {
 
 `bar_height` -> (int) bar's height (default `15`)
 
+`bar_blur` -> (bool) whether to blur the bar. Also requires the global blur to be enabled.
+
 `col.text` -> (col) bar's title text color
 
 `bar_title_enabled` -> (bool) whether to render the title (default `true`)
@@ -51,7 +53,7 @@ plugin {
 Use the `hyprbars-button` keyword.
 
 ```ini
-hyprbars-button = color, size, icon, on-click
+hyprbars-button = bgcolor, size, icon, on-click, fgcolor
 ```
 
 ## Window rules
