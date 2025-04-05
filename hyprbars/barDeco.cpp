@@ -7,6 +7,8 @@
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/managers/LayoutManager.hpp>
+#include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/managers/AnimationManager.hpp>
 #include <pango/pangocairo.h>
 
 #include "globals.hpp"
@@ -15,8 +17,10 @@
 CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
     m_pWindow = pWindow;
 
-    const auto PMONITOR       = pWindow->m_pMonitor.lock();
-    PMONITOR->scheduledRecalc = true;
+    static auto* const PCOLOR = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:bar_color")->getDataStaticPtr();
+
+    const auto         PMONITOR = pWindow->m_pMonitor.lock();
+    PMONITOR->scheduledRecalc   = true;
 
     //button events
     m_pMouseButtonCallback = HyprlandAPI::registerCallbackDynamic(
@@ -34,10 +38,12 @@ CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
 
     m_pTextTex    = makeShared<CTexture>();
     m_pButtonsTex = makeShared<CTexture>();
+
+    g_pAnimationManager->createAnimation(CHyprColor{**PCOLOR}, m_cRealBarColor, g_pConfigManager->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
+    m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 }
 
 CHyprBar::~CHyprBar() {
-    damageEntire();
     HyprlandAPI::unregisterCallback(PHANDLE, m_pMouseButtonCallback);
     HyprlandAPI::unregisterCallback(PHANDLE, m_pTouchDownCallback);
     HyprlandAPI::unregisterCallback(PHANDLE, m_pTouchUpCallback);
@@ -71,7 +77,7 @@ std::string CHyprBar::getDisplayName() {
 }
 
 bool CHyprBar::inputIsValid() {
-    if (!m_pWindow->m_pWorkspace->isVisible() || !g_pInputManager->m_dExclusiveLSes.empty() ||
+    if (!m_pWindow->m_pWorkspace || !m_pWindow->m_pWorkspace->isVisible() || !g_pInputManager->m_dExclusiveLSes.empty() ||
         (g_pSeatManager->seatGrab && !g_pSeatManager->seatGrab->accepts(m_pWindow->m_pWLSurface->resource())))
         return false;
 
@@ -107,7 +113,7 @@ void CHyprBar::onTouchDown(SCallbackInfo& info, ITouch::SDownEvent e) {
 }
 
 void CHyprBar::onMouseMove(Vector2D coords) {
-    if (!m_bDragPending || m_bTouchEv)
+    if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow))
         return;
 
     m_bDragPending = false;
@@ -115,7 +121,7 @@ void CHyprBar::onMouseMove(Vector2D coords) {
 }
 
 void CHyprBar::onTouchMove(SCallbackInfo& info, ITouch::SMotionEvent e) {
-    if (!m_bDragPending || !m_bTouchEv)
+    if (!m_bDragPending || !m_bTouchEv || !validMapped(m_pWindow))
         return;
 
     g_pInputManager->mouseMoveUnified(e.timeMs);
@@ -319,6 +325,9 @@ void CHyprBar::renderBarTitle(const Vector2D& bufferSize, const float scale) {
     pango_layout_set_font_description(layout, fontDesc);
     pango_font_description_free(fontDesc);
 
+    PangoContext* context = pango_layout_get_context(layout);
+    pango_context_set_base_dir(context, PANGO_DIRECTION_NEUTRAL);
+
     const int paddingTotal = scaledBarPadding * 2 + scaledButtonsSize + (std::string{*PALIGN} != "left" ? scaledButtonsSize : 0);
     const int maxWidth     = std::clamp(static_cast<int>(bufferSize.x - paddingTotal), 0, INT_MAX);
 
@@ -484,7 +493,12 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     static auto* const PENABLEBLUR       = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:bar_blur")->getDataStaticPtr();
     static auto* const PENABLEBLURGLOBAL = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "decoration:blur:enabled")->getDataStaticPtr();
 
-    CHyprColor         color = m_bForcedBarColor.value_or(**PCOLOR);
+    const CHyprColor   DEST_COLOR = m_bForcedBarColor.value_or(**PCOLOR);
+    if (DEST_COLOR != m_cRealBarColor->goal())
+        *m_cRealBarColor = DEST_COLOR;
+
+    CHyprColor color = m_cRealBarColor->value();
+
     color.a *= a;
     const bool BUTTONSRIGHT = std::string{*PALIGNBUTTONS} != "left";
     const bool SHOULDBLUR   = **PENABLEBLUR && **PENABLEBLURGLOBAL && color.a < 1.F;
@@ -545,7 +559,7 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     }
 
     if (SHOULDBLUR)
-        g_pHyprOpenGL->renderRectWithBlur(titleBarBox, color, scaledRounding, a);
+        g_pHyprOpenGL->renderRectWithBlur(titleBarBox, color, scaledRounding, m_pWindow->roundingPower(), a);
     else
         g_pHyprOpenGL->renderRect(titleBarBox, color, scaledRounding);
 
@@ -598,7 +612,7 @@ void CHyprBar::updateWindow(PHLWINDOW pWindow) {
 }
 
 void CHyprBar::damageEntire() {
-    ; // ignored
+    g_pHyprRenderer->damageBox(assignedBoxGlobal());
 }
 
 Vector2D CHyprBar::cursorRelativeToBar() {
@@ -615,13 +629,14 @@ uint64_t CHyprBar::getDecorationFlags() {
 }
 
 CBox CHyprBar::assignedBoxGlobal() {
-    const auto PWINDOW = m_pWindow.lock();
+    if (!validMapped(m_pWindow))
+        return {};
 
-    CBox       box = m_bAssignedBox;
-    box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, PWINDOW));
+    CBox box = m_bAssignedBox;
+    box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, m_pWindow.lock()));
 
-    const auto PWORKSPACE      = PWINDOW->m_pWorkspace;
-    const auto WORKSPACEOFFSET = PWORKSPACE && !PWINDOW->m_bPinned ? PWORKSPACE->m_vRenderOffset->value() : Vector2D();
+    const auto PWORKSPACE      = m_pWindow->m_pWorkspace;
+    const auto WORKSPACEOFFSET = PWORKSPACE && !m_pWindow->m_bPinned ? PWORKSPACE->m_vRenderOffset->value() : Vector2D();
 
     return box.translate(WORKSPACEOFFSET);
 }

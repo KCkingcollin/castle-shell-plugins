@@ -22,7 +22,6 @@
         localSystem.system = system;
         overlays = [
           self.overlays.hyprland-plugins
-          self.overlays.gcc14Stdenv
           hyprland.overlays.hyprland-packages
         ];
       });
@@ -47,31 +46,6 @@
           // {
             hyprbars = callPackage ./hyprbars {};
             hyprexpo = callPackage ./hyprexpo {};
-          };
-      };
-
-      # TODO: remove when https://github.com/NixOS/nixpkgs/pull/365776 lands in master
-      gcc14Stdenv = final: prev: {
-        hyprlandPlugins =
-          (prev.hyprlandPlugins or {})
-          // {
-            mkHyprlandPlugin = hyprland: args @ {pluginName, ...}:
-              hyprland.stdenv.mkDerivation (
-                args
-                // {
-                  pname = pluginName;
-                  nativeBuildInputs = [prev.pkg-config] ++ args.nativeBuildInputs or [];
-                  buildInputs = [hyprland] ++ hyprland.buildInputs ++ (args.buildInputs or []);
-                  meta =
-                    args.meta
-                    // {
-                      description = args.meta.description or "";
-                      longDescription =
-                        (args.meta.longDescription or "")
-                        + "\n\nPlugins can be installed via a plugin entry in the Hyprland NixOS or Home Manager options.";
-                    };
-                }
-              );
           };
       };
     };
